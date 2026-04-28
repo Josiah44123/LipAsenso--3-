@@ -362,7 +362,7 @@ export function DriverApp() {
                   heading = Math.atan2(rInfo.toCoords[1] - rInfo.fromCoords[1], rInfo.toCoords[0] - rInfo.fromCoords[0]) * (180 / Math.PI);
                }
 
-               // Reverse heading visually if driving back
+              
                if (puv.dir === -1) {
                   heading += 180;
                }
