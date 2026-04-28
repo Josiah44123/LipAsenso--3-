@@ -14,13 +14,30 @@ L.Icon.Default.mergeOptions({
   shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png",
 });
 
-const PUV_ICON = new L.Icon({
-  iconUrl: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-orange.png",
-  shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png",
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-  popupAnchor: [1, -34],
-});
+// Helper to generate dynamic rotated car icons
+const createCarIcon = (heading: number) => {
+  const html = `
+    <div style="transform: rotate(${heading}deg); transition: transform 0.2s ease-out; width: 100%; height: 100%; display: flex; justify-content: center; align-items: center;">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="32" height="32" style="filter: drop-shadow(0px 3px 4px rgba(0,0,0,0.4));">
+        <rect x="5" y="2" width="14" height="20" rx="4" fill="#f97316" stroke="#ffffff" stroke-width="1.5" />
+        <rect x="7" y="6" width="10" height="4" rx="1" fill="#1e293b" />
+        <rect x="7" y="16" width="10" height="3" rx="1" fill="#1e293b" />
+        <circle cx="8" cy="3" r="1.5" fill="#fef08a" />
+        <circle cx="16" cy="3" r="1.5" fill="#fef08a" />
+        <circle cx="8" cy="21" r="1.5" fill="#ef4444" />
+        <circle cx="16" cy="21" r="1.5" fill="#ef4444" />
+      </svg>
+    </div>
+  `;
+
+  return new L.DivIcon({
+    html: html,
+    className: 'smooth-car-icon',
+    iconSize: [32, 32],
+    iconAnchor: [16, 16],
+    popupAnchor: [0, -16],
+  });
+};
 
 const HUB_ICON = new L.Icon({
   iconUrl: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-blue.png",
@@ -51,18 +68,19 @@ export function DriverApp() {
     { id: "fiesta", name: "Fiesta World Mall", coords: [13.9213, 121.1656] as [number, number], zone: "Loading Zone", demand: "High (35 waits)" },
   ]);
 
+  // Reduced speeds significantly for slow movement
   const [puvs, setPuvs] = useState([
-    { id: 1, routeId: 'r1', progress: 0.1, dir: 1, speed: 0.05, plate: "DXB-1234", capacity: "12/20" },
-    { id: 2, routeId: 'r1', progress: 0.8, dir: -1, speed: 0.04, plate: "VVT-9921", capacity: "5/20" },
-    { id: 3, routeId: 'r2', progress: 0.5, dir: 1, speed: 0.06, plate: "PUV-001X", capacity: "18/20" },
-    { id: 4, routeId: 'r3', progress: 0.3, dir: -1, speed: 0.04, plate: "BAT-8822", capacity: "8/20" },
-    { id: 5, routeId: 'r4', progress: 0.7, dir: 1, speed: 0.03, plate: "LIP-552", capacity: "19/20"},
+    { id: 1, routeId: 'r1', progress: 0.1, dir: 1, speed: 0.0025, plate: "DXB-1234", capacity: "12/20" },
+    { id: 2, routeId: 'r1', progress: 0.8, dir: -1, speed: 0.002, plate: "VVT-9921", capacity: "5/20" },
+    { id: 3, routeId: 'r2', progress: 0.5, dir: 1, speed: 0.003, plate: "PUV-001X", capacity: "18/20" },
+    { id: 4, routeId: 'r3', progress: 0.3, dir: -1, speed: 0.002, plate: "BAT-8822", capacity: "8/20" },
+    { id: 5, routeId: 'r4', progress: 0.7, dir: 1, speed: 0.0015, plate: "LIP-552", capacity: "19/20"},
   ]);
 
   const [routePaths, setRoutePaths] = useState<Record<string, [number, number][]>>({});
 
   useEffect(() => {
-    // Progress loops between 0 and 1
+    // 100ms interval for smoother positional updates
     const interval = setInterval(() => {
       setPuvs(currentPuvs => currentPuvs.map(puv => {
         let newProg = puv.progress + (puv.speed * puv.dir);
@@ -76,7 +94,7 @@ export function DriverApp() {
         }
         return { ...puv, progress: newProg, dir: newDir };
       }));
-    }, 500); // UI tick
+    }, 100); 
     return () => clearInterval(interval);
   }, []);
 
@@ -91,7 +109,6 @@ export function DriverApp() {
           const res = await fetch(url);
           const data = await res.json();
           if (data.routes && data.routes.length > 0) {
-            // OSRM returns coordinates as [lng, lat], Leaflet wants [lat, lng]
             newPaths[route.id] = data.routes[0].geometry.coordinates.map((coord: [number, number]) => [coord[1], coord[0]]);
           } else {
             newPaths[route.id] = [fromLoc.coords, toLoc.coords];
@@ -112,19 +129,17 @@ export function DriverApp() {
   }, [locations]);
 
   const getDistance = (c1: [number, number], c2: [number, number]) => {
-     return Math.sqrt(Math.pow(c1[0]-c2[0], 2) + Math.pow(c1[1]-c2[1], 2));
+      return Math.sqrt(Math.pow(c1[0]-c2[0], 2) + Math.pow(c1[1]-c2[1], 2));
   };
 
-  // Compute dynamic stats based on exact distances
   const dynamicRoutes = useMemo(() => {
     return ROUTES_DEF.map(route => {
        const fromLoc = locations.find(l => l.id === route.fromId)!;
        const toLoc = locations.find(l => l.id === route.toId)!;
        const dist = getDistance(fromLoc.coords, toLoc.coords);
        
-       // Calculate dynamic ETA and Traffic Status
-       const baseTime = Math.ceil(dist * 600); // Arbitrary formula for demo
-       const hasTraffic = dist > 0.035; // If locations are pulled far apart, simulate traffic
+       const baseTime = Math.ceil(dist * 600); 
+       const hasTraffic = dist > 0.035; 
        
        return {
           ...route,
@@ -145,6 +160,15 @@ export function DriverApp() {
   return (
     <div className="w-full h-full flex flex-col xl:flex-row bg-white rounded-3xl overflow-hidden shadow-xl border border-slate-200 animate-in fade-in duration-500">
       
+      {/* Required CSS to interpolate map marker translation smoothly */}
+      <style>{`
+        .smooth-car-icon {
+          background: transparent !important;
+          border: none !important;
+          transition: transform 0.1s linear;
+        }
+      `}</style>
+
       {/* Sidebar Navigation & Controls */}
       <div className="w-full xl:w-[400px] border-r border-slate-200 flex flex-col bg-slate-50/50 z-10 shrink-0">
          <div className="p-6 bg-white border-b border-slate-200">
@@ -295,10 +319,9 @@ export function DriverApp() {
                const rInfo = dynamicRoutes.find(r => r.id === puv.routeId);
                if (!rInfo) return null;
 
-               let lat, lng;
+               let lat, lng, heading = 0;
                const path = routePaths[puv.routeId];
                if (path && path.length > 1) {
-                  // Calculate total distance of path
                   const segmentDists = [];
                   let totalDist = 0;
                   for (let i = 0; i < path.length - 1; i++) {
@@ -319,6 +342,10 @@ export function DriverApp() {
                   if (segIdx >= segmentDists.length) {
                      lat = path[path.length - 1][0];
                      lng = path[path.length - 1][1];
+                     // Retain direction angle at the end of the line
+                     const p1 = path[path.length - 2];
+                     const p2 = path[path.length - 1];
+                     heading = Math.atan2(p2[1] - p1[1], p2[0] - p1[0]) * (180 / Math.PI);
                   } else {
                      const segmentDist = segmentDists[segIdx];
                      const weight = segmentDist > 0 ? (targetDist - currentDist) / segmentDist : 0;
@@ -326,14 +353,22 @@ export function DriverApp() {
                      const p2 = path[segIdx + 1];
                      lat = p1[0] + (p2[0] - p1[0]) * weight;
                      lng = p1[1] + (p2[1] - p1[1]) * weight;
+                     // Calculate heading for the current segment segment
+                     heading = Math.atan2(p2[1] - p1[1], p2[0] - p1[0]) * (180 / Math.PI);
                   }
                } else {
                   lat = rInfo.fromCoords[0] + (rInfo.toCoords[0] - rInfo.fromCoords[0]) * puv.progress;
                   lng = rInfo.fromCoords[1] + (rInfo.toCoords[1] - rInfo.fromCoords[1]) * puv.progress;
+                  heading = Math.atan2(rInfo.toCoords[1] - rInfo.fromCoords[1], rInfo.toCoords[0] - rInfo.fromCoords[0]) * (180 / Math.PI);
+               }
+
+               // Reverse heading visually if driving back
+               if (puv.dir === -1) {
+                  heading += 180;
                }
 
                return (
-                <Marker key={puv.id} position={[lat, lng]} icon={PUV_ICON}>
+                <Marker key={puv.id} position={[lat, lng]} icon={createCarIcon(heading)}>
                    <Popup className="custom-popup">
                      <div className="p-2 min-w-[160px]">
                        <div className="flex items-center gap-2 mb-3">
@@ -349,7 +384,7 @@ export function DriverApp() {
 
                        {rInfo.isStressed && (
                          <div className="bg-rose-100 border border-rose-200 text-rose-700 text-[10px] uppercase font-bold p-1.5 rounded text-center">
-                            Dijkstra Rerouting Suggested
+                           Dijkstra Rerouting Suggested
                          </div>
                        )}
                      </div>
@@ -357,7 +392,7 @@ export function DriverApp() {
                 </Marker>
                )
             })}
-          </MapContainer>
+         </MapContainer>
       </div>
     </div>
   );
